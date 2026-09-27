@@ -275,6 +275,11 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
             else:
                 raise NotImplementedError(f"{solver_type} is not implemented for {self.__class__}")
 
+        if not predict_x0 and final_sigmas_type == "zero":
+            raise ValueError(
+                f"`final_sigmas_type` {final_sigmas_type} is not supported for `predict_x0=False`. Please choose `sigma_min` instead."
+            )
+
         self.predict_x0 = predict_x0
         # setable values
         self.num_inference_steps = None
@@ -945,16 +950,16 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
             x_t_ = sigma_t / sigma_s0 * x - alpha_t * h_phi_1 * m0
             if D1s is not None:
                 pred_res = torch.einsum("k,bkc...->bc...", rhos_p, D1s)
+                x_t = x_t_ - alpha_t * B_h * pred_res
             else:
-                pred_res = 0
-            x_t = x_t_ - alpha_t * B_h * pred_res
+                x_t = x_t_
         else:
             x_t_ = alpha_t / alpha_s0 * x - sigma_t * h_phi_1 * m0
             if D1s is not None:
                 pred_res = torch.einsum("k,bkc...->bc...", rhos_p, D1s)
+                x_t = x_t_ - sigma_t * B_h * pred_res
             else:
-                pred_res = 0
-            x_t = x_t_ - sigma_t * B_h * pred_res
+                x_t = x_t_
 
         x_t = x_t.to(x.dtype)
         return x_t
@@ -1209,6 +1214,10 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
             this_order = min(self.config.solver_order, len(self.timesteps) - self.step_index)
         else:
             this_order = self.config.solver_order
+
+        if self.config.final_sigmas_type == "zero" and self.step_index == len(self.timesteps) - 1:
+            # the step to sigma = 0 has h = inf, only the first-order update is finite there
+            this_order = 1
 
         self.this_order = min(this_order, self.lower_order_nums + 1)  # warmup for multistep
         assert self.this_order > 0

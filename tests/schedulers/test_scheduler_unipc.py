@@ -257,6 +257,45 @@ class UniPCMultistepSchedulerTest(SchedulerCommonTest):
 
                     assert sample.dtype == torch.float16
 
+    def test_last_step_to_sigma_zero_is_the_data_prediction(self):
+        # h is inf on the step to sigma = 0: bh1 evaluated B_h * 0 with B_h = -inf and returned nan, and
+        # lower_order_final=False kept the higher-order terms there and returned inf or hit a singular system
+        for solver_type, solver_order, lower_order_final in [("bh1", 2, True), ("bh1", 3, False), ("bh2", 3, False)]:
+            scheduler_class = self.scheduler_classes[0]
+            scheduler_config = self.get_scheduler_config(
+                solver_type=solver_type,
+                solver_order=solver_order,
+                lower_order_final=lower_order_final,
+                final_sigmas_type="zero",
+            )
+            scheduler = scheduler_class(**scheduler_config)
+
+            num_inference_steps = 10
+            model = self.dummy_model()
+            sample = self.dummy_sample_deter
+            scheduler.set_timesteps(num_inference_steps)
+
+            for t in scheduler.timesteps[:-1]:
+                residual = model(sample, t)
+                sample = scheduler.step(residual, t, sample).prev_sample
+
+            t = scheduler.timesteps[-1]
+            residual = model(sample, t)
+            data_prediction = scheduler.convert_model_output(residual, sample=sample)
+            sample = scheduler.step(residual, t, sample).prev_sample
+
+            assert torch.isfinite(sample).all(), (solver_type, solver_order, lower_order_final)
+            assert torch.equal(sample, data_prediction), (solver_type, solver_order, lower_order_final)
+
+    def test_predict_x0_false_requires_final_sigmas_type_sigma_min(self):
+        # the noise-prediction update evaluates sigma_t * expm1(h) = 0 * inf on the step to sigma = 0
+        scheduler_class = self.scheduler_classes[0]
+        with self.assertRaises(ValueError):
+            scheduler_class(**self.get_scheduler_config(predict_x0=False, final_sigmas_type="zero"))
+
+        sample = self.full_loop(predict_x0=False, final_sigmas_type="sigma_min")
+        assert torch.isfinite(sample).all()
+
     def test_full_loop_with_noise(self):
         scheduler_class = self.scheduler_classes[0]
         scheduler_config = self.get_scheduler_config()
