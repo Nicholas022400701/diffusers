@@ -1210,6 +1210,14 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         else:
             this_order = self.config.solver_order
 
+        # The converted sigma schedules (Karras, exponential, beta) already end at sigma_min, so with
+        # `final_sigmas_type="sigma_min"` the final step has zero width and the higher-order predictor would divide by
+        # h = 0; take it as a first-order step.
+        if self.step_index == len(self.timesteps) - 1 and bool(
+            self.sigmas[self.step_index + 1] == self.sigmas[self.step_index]
+        ):
+            this_order = 1
+
         self.this_order = min(this_order, self.lower_order_nums + 1)  # warmup for multistep
         assert self.this_order > 0
 

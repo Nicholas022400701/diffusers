@@ -1235,11 +1235,14 @@ class DPMSolverMultistepScheduler(SchedulerMixin, ConfigMixin):
         if self.step_index is None:
             self._init_step_index(timestep)
 
-        # Improve numerical stability for small number of steps
+        # Improve numerical stability for small number of steps. The converted sigma schedules (Karras, exponential,
+        # beta, Lu lambdas) already end at sigma_min, so with `final_sigmas_type="sigma_min"` the final step has zero
+        # width and the higher-order updates would divide by h = 0; take it as a first-order step as well.
         lower_order_final = (self.step_index == len(self.timesteps) - 1) and (
             self.config.euler_at_final
             or (self.config.lower_order_final and len(self.timesteps) < 15)
             or self.config.final_sigmas_type == "zero"
+            or bool(self.sigmas[self.step_index + 1] == self.sigmas[self.step_index])
         )
         lower_order_second = (
             (self.step_index == len(self.timesteps) - 2) and self.config.lower_order_final and len(self.timesteps) < 15

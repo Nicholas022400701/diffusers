@@ -366,3 +366,30 @@ class DPMSolverMultistepSchedulerTest(SchedulerCommonTest):
 
     def test_exponential_sigmas(self):
         self.check_over_configs(use_exponential_sigmas=True)
+
+    def test_zero_width_final_step(self):
+        # the converted sigma schedules already end at sigma_min, so `final_sigmas_type="sigma_min"` repeats it and
+        # the final step has h = 0; the higher-order updates must not divide by it
+        scheduler_class = self.scheduler_classes[0]
+        for sigmas_kwarg in ["use_karras_sigmas", "use_exponential_sigmas", "use_beta_sigmas", "use_lu_lambdas"]:
+            for solver_order, solver_type in [(3, "midpoint"), (2, "heun")]:
+                scheduler_config = self.get_scheduler_config(
+                    solver_order=solver_order,
+                    solver_type=solver_type,
+                    final_sigmas_type="sigma_min",
+                    **{sigmas_kwarg: True},
+                )
+                scheduler = scheduler_class(**scheduler_config)
+                scheduler.set_timesteps(20)
+                assert scheduler.sigmas[-1] == scheduler.sigmas[-2]
+
+                model = self.dummy_model()
+                sample = self.dummy_sample_deter
+                for t in scheduler.timesteps[:-1]:
+                    sample = scheduler.step(model(sample, t), t, sample).prev_sample
+                t = scheduler.timesteps[-1]
+                prev_sample = scheduler.step(model(sample, t), t, sample).prev_sample
+
+                msg = f"{sigmas_kwarg}, solver_order={solver_order}, solver_type={solver_type}"
+                assert torch.isfinite(prev_sample).all(), msg
+                assert torch.allclose(prev_sample, sample), msg

@@ -284,6 +284,37 @@ class UniPCMultistepSchedulerTest(SchedulerCommonTest):
         assert abs(result_sum.item() - 315.5757) < 1e-2, f" expected result sum 315.5757, but get {result_sum}"
         assert abs(result_mean.item() - 0.4109) < 1e-3, f" expected result mean 0.4109, but get {result_mean}"
 
+    def test_zero_width_final_step(self):
+        # the converted sigma schedules already end at sigma_min, so `final_sigmas_type="sigma_min"` repeats it and
+        # the final step has h = 0; the third-order predictor must not divide by it. The corrector of the final step
+        # is disabled so that the zero-width predictor step can be checked to leave the sample unchanged.
+        scheduler_class = self.scheduler_classes[0]
+        num_inference_steps = 20
+        for sigmas_kwarg in ["use_karras_sigmas", "use_exponential_sigmas", "use_beta_sigmas"]:
+            for solver_type in ["bh1", "bh2"]:
+                scheduler_config = self.get_scheduler_config(
+                    solver_order=3,
+                    solver_type=solver_type,
+                    lower_order_final=False,
+                    final_sigmas_type="sigma_min",
+                    disable_corrector=[num_inference_steps - 2],
+                    **{sigmas_kwarg: True},
+                )
+                scheduler = scheduler_class(**scheduler_config)
+                scheduler.set_timesteps(num_inference_steps)
+                assert scheduler.sigmas[-1] == scheduler.sigmas[-2]
+
+                model = self.dummy_model()
+                sample = self.dummy_sample_deter
+                for t in scheduler.timesteps[:-1]:
+                    sample = scheduler.step(model(sample, t), t, sample).prev_sample
+                t = scheduler.timesteps[-1]
+                prev_sample = scheduler.step(model(sample, t), t, sample).prev_sample
+
+                msg = f"{sigmas_kwarg}, solver_type={solver_type}"
+                assert torch.isfinite(prev_sample).all(), msg
+                assert torch.allclose(prev_sample, sample), msg
+
 
 class UniPCMultistepScheduler1DTest(UniPCMultistepSchedulerTest):
     @property
